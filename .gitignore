@@ -25,3 +25,6 @@ trainset.fasta
 eval/
 results/
 
+
+# local foldseek static build (82MB binary, see .env FOLDSEEK)
+bin/
