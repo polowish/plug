@@ -14,8 +14,8 @@
 # doesn't take the other benchmarks with it).
 
 #SBATCH --job-name=plug-benchmarks
-#SBATCH --output=logs/benchmarks_%j.out
-#SBATCH --error=logs/benchmarks_%j.err
+#SBATCH --output=scripts/logs/benchmarks_%j.out
+#SBATCH --error=scripts/logs/benchmarks_%j.err
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=20:00
@@ -27,9 +27,8 @@ module load miniforge3
 conda activate /home/remote/smadejski/scratch/venvs/plug
 
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(dirname "$here")"
-mkdir -p "$repo/logs"
+repo="$SLURM_SUBMIT_DIR"
+cd "$repo"
 
 # fail now rather than partway through the set
 for b in curl unzip python3; do
