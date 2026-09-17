@@ -15,16 +15,17 @@
 
 #SBATCH --job-name=plug-benchmarks
 #SBATCH --output=logs/benchmarks_%j.out
-#SBATCH --error=logs/benchmarks_%j.out
-#SBATCH --cpus-per-task=2
+#SBATCH --error=logs/benchmarks_%j.err
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
-#SBATCH --time=08:00:00
-### ---- UCSF HPC Core: fill these in for your cluster ----
-### #SBATCH --partition=CHANGEME
-### #SBATCH --account=CHANGEME
-### -------------------------------------------------------
+#SBATCH --time=20:00
+#SBATCH --partition=cpu
 
 set -euo pipefail
+module load CBI
+module load miniforge3
+conda activate /home/remote/smadejski/scratch/venvs/plug
+
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(dirname "$here")"
