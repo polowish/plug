@@ -10,7 +10,7 @@ __pycache__/
 # downloaded + formatted benchmark data (keep the download scripts though)
 data/*
 !data/*.sh
-/scripts/logs/
+scripts/logs/
 
 # uniref90 download, mmseqs scratch, tmp
 uniref/
