@@ -1,0 +1,1 @@
+4k2m_A	RMSF download failed on 2026-10-09 (transient: the file exists); excluded so the pinned 1,937-chain split stays valid
