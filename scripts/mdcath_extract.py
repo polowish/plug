@@ -24,6 +24,7 @@
 # temperatures compares the same residue pairs. contacts use ESMDynamic's 8 A ca cutoff.
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -212,12 +213,78 @@ def extract(path: Path, out: Path, keep_frames: bool = True) -> dict:
             "rmsf_check_max_abs_A": float(np.nanmax(np.abs(rmsf * 10 - rmsf_ca)))}
 
 
+def _one(job):
+    path, out, keep_frames = job
+    try:
+        return extract(path, out, keep_frames=keep_frames), None
+    except BaseException as e:                              # recorded; the worker carries on
+        return {"domain": path.stem}, f"{type(e).__name__}: {e}"
+
+
+def watch(staging: Path, out: Path, workers: int, keep_frames: bool) -> int:
+    """Consume <staging>/*.h5 as mdcath_fetch.py delivers them: claim (atomic rename into
+    claimed/), extract, append to <out>/done.txt, delete. A failed domain moves to failed/
+    with its error in <out>/extract_failed.txt. Stops when FETCH_DONE exists and nothing is
+    left. Claimed files from a killed run are put back first, so a rerun resumes."""
+    import time
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+
+    claimed, failed = staging / "claimed", staging / "failed"
+    for d in (claimed, failed, out):
+        d.mkdir(parents=True, exist_ok=True)
+    for f in claimed.glob("*.h5"):
+        os.replace(f, staging / f.name)
+    running = {}
+    n_ok = n_bad = 0
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        while True:
+            while len(running) < workers:
+                todo = sorted(staging.glob("*.h5"))
+                if not todo:
+                    break
+                src = todo[0]
+                dst = claimed / src.name
+                try:
+                    os.replace(src, dst)
+                except FileNotFoundError:
+                    continue
+                running[pool.submit(_one, (dst, out, keep_frames))] = dst
+            if not running:
+                if (staging / "FETCH_DONE").exists() and not list(staging.glob("*.h5")):
+                    break
+                time.sleep(15)
+                continue
+            done, _ = wait(list(running), timeout=60, return_when=FIRST_COMPLETED)
+            for fut in done:
+                dst = running.pop(fut)
+                info, err = fut.result()
+                if err is None:
+                    with open(out / "done.txt", "a") as fh:
+                        fh.write(info["domain"] + "\n")
+                    dst.unlink()
+                    n_ok += 1
+                    print(json.dumps(info), flush=True)
+                else:
+                    os.replace(dst, failed / dst.name)
+                    with open(out / "extract_failed.txt", "a") as fh:
+                        fh.write(f"{dst.stem}\t{err}\n")
+                    n_bad += 1
+                    print(f"FAILED {dst.stem}: {err}", flush=True)
+    print(f"done: {n_ok} extracted, {n_bad} failed", flush=True)
+    return 1 if n_bad else 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="mdcath h5 -> per-frame descriptors + summaries")
-    p.add_argument("h5", nargs="+", type=Path)
+    p.add_argument("h5", nargs="*", type=Path)
     p.add_argument("--out", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "mdcath")
     p.add_argument("--no-frames", action="store_true", help="summaries only")
+    p.add_argument("--watch", type=Path, metavar="STAGING",
+                   help="consume what mdcath_fetch.py stages, deleting each file once extracted")
+    p.add_argument("--workers", type=int, default=4)
     args = p.parse_args()
+    if args.watch:
+        return watch(args.watch, args.out, args.workers, not args.no_frames)
     for h in args.h5:
         info = extract(h, args.out, keep_frames=not args.no_frames)
         print(json.dumps(info), flush=True)
