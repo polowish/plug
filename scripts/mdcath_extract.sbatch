@@ -10,7 +10,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=2-00:00:00
-#SBATCH --output=logs/%x_%j.out
+#SBATCH --output=scripts/logs/%x_%j.out
 set -euo pipefail
 STAGING="${1:-$HOME/scratch/mdcath_staging}"
 OUT="${2:-$HOME/fac/data/mdcath}"
