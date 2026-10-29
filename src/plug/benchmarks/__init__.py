@@ -260,6 +260,7 @@ from .passerrank import Passerrank
 from .lp_pdbbind import LpPdbbind
 from .bindingdb import Bindingdb
 from .atlas import Atlas
+from .cryptobench import Apoholo, Cryptobench
 
 
 # every benchmark, looked up by name — this is what fastas.py and build_trainset loop

@@ -34,10 +34,15 @@ from Bio.SeqUtils import seq1
 
 
 def chain_scheme(cif: dict, chain: str):
-    """[(one-letter, auth key or None)] in sequence order for the chain whose author id is
-    `chain`, from pdbx_poly_seq_scheme; the key is auth_seq_num + insertion code."""
+    """([(one-letter, auth key or None)] in sequence order, author chain id) for `chain`,
+    from pdbx_poly_seq_scheme; the key is the author residue number + insertion code.
+    `chain` is matched as an author chain id first, then as a label (asym) id, since an
+    entry can name a chain either way."""
     s = "_pdbx_poly_seq_scheme."
-    rows = zip(cif[s + "pdb_strand_id"], cif[s + "mon_id"], cif[s + "pdb_seq_num"],
+    strands, asyms = cif[s + "pdb_strand_id"], cif[s + "asym_id"]
+    use = strands if chain in strands else asyms
+    auth_chain = chain if use is strands else next((st for st, a in zip(strands, asyms) if a == chain), chain)
+    rows = zip(use, cif[s + "mon_id"], cif[s + "pdb_seq_num"],
                cif[s + "auth_seq_num"], cif.get(s + "pdb_ins_code", ["."] * len(cif[s + "mon_id"])))
     out = []
     for strand, mon, pdb_num, auth_num, ins in rows:
@@ -48,7 +53,7 @@ def chain_scheme(cif: dict, chain: str):
         observed = auth_num not in ("?", ".")
         key = (pdb_num + ("" if ins in ("?", ".") else ins)) if observed else None
         out.append((aa, key))
-    return out
+    return out, auth_chain
 
 
 def ca_coords(cif: dict, chain: str) -> dict:
@@ -94,14 +99,14 @@ def main() -> int:
 
     aligner = PairwiseAligner(mode="global", match_score=2, mismatch_score=-1,
                               open_gap_score=-5, extend_gap_score=-0.5)
-    rows, skipped = [], []
+    rows, skipped, no_holo_chain = [], [], []
     for apo, holos in sorted(data.items()):
         for chain in sorted({h["apo_chain"] for h in holos}):
             hs = [h for h in holos if h["apo_chain"] == chain]
             if apo.lower() not in cifs:
                 skipped.append((apo, chain, "no apo mmcif")); continue
             apo_cif = cif_of(apo)
-            scheme = chain_scheme(apo_cif, chain)
+            scheme, apo_auth = chain_scheme(apo_cif, chain)
             if not scheme:
                 skipped.append((apo, chain, "chain not in pdbx_poly_seq_scheme")); continue
             seq = "".join(a for a, _ in scheme)
@@ -114,14 +119,18 @@ def main() -> int:
                         site.add(pos_of[key] + 1)
                     else:
                         unmapped += 1
-            apo_ca = ca_coords(apo_cif, chain)
+            apo_ca = ca_coords(apo_cif, apo_auth)
             main = max(hs, key=lambda h: (h.get("is_main_holo_structure", False), h.get("pRMSD", 0)))
             disp = [float("nan")] * len(seq)
             hp = main["holo_pdb_id"].lower()
             if hp in cifs:
-                hscheme = chain_scheme(cif_of(hp), main["holo_chain"])
-                holo_ca = ca_coords(cif_of(hp), main["holo_chain"])
+                hscheme, holo_auth = chain_scheme(cif_of(hp), main["holo_chain"])
+                holo_ca = ca_coords(cif_of(hp), holo_auth)
                 hseq = "".join(a for a, _ in hscheme)
+                if not hseq:
+                    no_holo_chain.append(f"{apo}_{chain} -> {main['holo_pdb_id']}_{main['holo_chain']}")
+                    hp = None
+            if hp in cifs:
                 aln = aligner.align(seq, hseq)[0]
                 pairs = []
                 for (a0, a1), (b0, b1) in zip(*aln.aligned):
@@ -151,6 +160,9 @@ def main() -> int:
           f"{len(skipped)} skipped")
     for s in skipped[:20]:
         print("  skipped", *s)
+    if no_holo_chain:
+        print(f"  {len(no_holo_chain)} main holo chains missing from their mmcif's sequence scheme "
+              f"(no displacement): {', '.join(no_holo_chain[:10])}{' ...' if len(no_holo_chain) > 10 else ''}")
     return 0
 
 
