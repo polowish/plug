@@ -49,26 +49,30 @@ def _text(ds):
 def backbone(g):
     """Atom indices of N, CA, C per residue, the sequence, residue ids, and the starting
     structure's ca coordinates, all from the domain's pdbProteinAtoms (atom order = coords)."""
-    names, resids, resn, xyz = [], [], [], []
+    names, resids, resn, xyz, keys = [], [], [], [], []
     for line in _text(g["pdbProteinAtoms"]).splitlines():
         if line.startswith(("ATOM", "HETATM")):
             names.append(line[12:16].strip())
             resn.append(line[17:20].strip())
             resids.append(int(line[22:26]))
             xyz.append((float(line[30:38]), float(line[38:46]), float(line[46:54])))
+            # a residue is a run of atoms sharing number, insertion code and name: an
+            # insertion (52, 52A) repeats the number, so the number alone merges residues
+            keys.append((line[22:27], line[17:20]))
     n_atoms = int(g.attrs["numProteinAtoms"])
     if len(names) != n_atoms:
         raise SystemExit(f"pdbProteinAtoms has {len(names)} atoms, numProteinAtoms says {n_atoms}")
     if not np.array_equal(np.asarray(resids), g["resid"][()]):
         raise SystemExit("pdbProteinAtoms residue ids disagree with the resid dataset")
-    order, idx = [], {}
-    for a, (nm, r, rn) in enumerate(zip(names, resids, resn)):
-        if r not in idx:
-            idx[r] = {"resn": rn}
-            order.append(r)
-        idx[r][nm] = a
+    order, idx, resnum = [], {}, []
+    for a, (nm, r, rn, key) in enumerate(zip(names, resids, resn, keys)):
+        if a == 0 or key != keys[a - 1]:
+            order.append(len(order))
+            idx[order[-1]] = {"resn": rn}
+            resnum.append(r)
+        idx[order[-1]][nm] = a
     for need in ("N", "CA", "C"):
-        missing = [r for r in order if need not in idx[r]]
+        missing = [resnum[r] for r in order if need not in idx[r]]
         if missing:
             raise SystemExit(f"residues {missing[:5]} have no {need} atom")
     n = np.array([idx[r]["N"] for r in order])
@@ -76,7 +80,7 @@ def backbone(g):
     c = np.array([idx[r]["C"] for r in order])
     seq = "".join(THREE.get(idx[r]["resn"], "X") for r in order)
     start_ca = np.asarray(xyz, np.float32)[ca]
-    return n, ca, c, seq, np.asarray(order), start_ca
+    return n, ca, c, seq, np.asarray(resnum), start_ca
 
 
 def dihedral(p0, p1, p2, p3):
