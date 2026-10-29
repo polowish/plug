@@ -13,12 +13,13 @@
 # extraction worker it may stop once the staging directory is empty.
 #
 # --reference DIR saves only each domain's starting structure, read straight off the hub
-# with http range requests (no full download, ~6 s a domain, --threads at once):
+# with http range requests (no full download; ~0.25 domains/s at 8-16 threads, so all
+# domains take ~6 h -- resumable, like the fetch):
 # DIR/<domain>.npz with ca (L x 3, angstrom), resid, sequence -- parsed by the extractor's
 # own backbone(), so rows line up with frames/ and summaries/ -- and pdbProteinAtoms.
 #
 #   ~/scratch/venvs/mdcath/bin/python scripts/mdcath_fetch.py --reference ~/fac/data/mdcath/reference \
-#       --out ~/fac/data/mdcath --threads 8
+#       --out ~/fac/data/mdcath --threads 16
 import argparse
 import os
 import shutil
@@ -64,11 +65,12 @@ def fetch(dom: str, staging: Path, tries: int = 3) -> bool:
     return False
 
 
-def reference(dom: str, outdir: Path, tries: int = 3) -> str | None:
-    """Save one domain's starting structure; None on success, else the error."""
+def reference(dom: str, outdir: Path, fs, tries: int = 3) -> str | None:
+    """Save one domain's starting structure; None on success, else the error. `fs` is one
+    shared HfFileSystem whose listing of data/ is already cached: a fresh one per domain
+    re-lists the 5,398-file directory every time (~0.08 domains/s at 8 threads)."""
     import h5py
     import numpy as np
-    from huggingface_hub import HfFileSystem
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from mdcath_extract import backbone
@@ -76,7 +78,7 @@ def reference(dom: str, outdir: Path, tries: int = 3) -> str | None:
     err = None
     for k in range(tries):
         try:
-            with HfFileSystem().open(f"datasets/{REPO}/data/mdcath_dataset_{dom}.h5", "rb",
+            with fs.open(f"datasets/{REPO}/data/mdcath_dataset_{dom}.h5", "rb",
                                      block_size=1 << 20) as fh, h5py.File(fh, "r") as f:
                 g = f[dom]
                 _, _, _, seq, resid, ca = backbone(g)
@@ -96,12 +98,16 @@ def reference(dom: str, outdir: Path, tries: int = 3) -> str | None:
 def references(doms: list[str], outdir: Path, threads: int) -> int:
     from concurrent.futures import ThreadPoolExecutor
 
+    from huggingface_hub import HfFileSystem
+
+    fs = HfFileSystem()
+    fs.ls(f"datasets/{REPO}/data", detail=False)            # list once; every open reuses it
     outdir.mkdir(parents=True, exist_ok=True)
     todo = [d for d in doms if not (outdir / f"{d}.npz").exists()]
     print(f"{len(doms)} domains, {len(doms) - len(todo)} already saved, {len(todo)} to read", flush=True)
     failed, t0 = [], time.time()
     with ThreadPoolExecutor(max_workers=threads) as pool:
-        for i, (dom, err) in enumerate(zip(todo, pool.map(lambda d: reference(d, outdir), todo))):
+        for i, (dom, err) in enumerate(zip(todo, pool.map(lambda d: reference(d, outdir, fs), todo))):
             if err:
                 failed.append(f"{dom}\t{err}")
                 print(f"  FAILED {dom}: {err}", file=sys.stderr, flush=True)
