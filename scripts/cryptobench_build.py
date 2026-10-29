@@ -101,8 +101,16 @@ def main() -> int:
                               open_gap_score=-5, extend_gap_score=-0.5)
     rows, skipped, no_holo_chain = [], [], []
     for apo, holos in sorted(data.items()):
-        for chain in sorted({h["apo_chain"] for h in holos}):
-            hs = [h for h in holos if h["apo_chain"] == chain]
+        # a pocket can span chains ("A-B", holo "C-D"): it counts toward each chain, and the
+        # holo chains pair with the apo ones by position (unpaired when the counts differ)
+        by_chain: dict = {}
+        for h in holos:
+            chs, hchs = h["apo_chain"].split("-"), h["holo_chain"].split("-")
+            for k, ch in enumerate(chs):
+                by_chain.setdefault(ch, []).append((h, hchs[k] if len(hchs) == len(chs) else None))
+        for chain in sorted(by_chain):
+            hs = [h for h, _ in by_chain[chain]]
+            holo_chain_of = {id(h): hc for h, hc in by_chain[chain]}
             if apo.lower() not in cifs:
                 skipped.append((apo, chain, "no apo mmcif")); continue
             apo_cif = cif_of(apo)
@@ -115,20 +123,24 @@ def main() -> int:
             for h in hs:
                 for sel in h["apo_pocket_selection"]:
                     ch, _, key = sel.partition("_")
-                    if ch in (chain, apo_auth) and key in pos_of:
+                    if ch not in (chain, apo_auth):
+                        continue                       # another chain of a multi-chain pocket
+                    if key in pos_of:
                         site.add(pos_of[key] + 1)
                     else:
                         unmapped += 1
             apo_ca = ca_coords(apo_cif, apo_auth)
-            main = max(hs, key=lambda h: (h.get("is_main_holo_structure", False), h.get("pRMSD", 0)))
+            paired = [h for h in hs if holo_chain_of[id(h)] is not None] or hs
+            main = max(paired, key=lambda h: (h.get("is_main_holo_structure", False), h.get("pRMSD", 0)))
+            main_chain = holo_chain_of[id(main)]
             disp = [float("nan")] * len(seq)
-            hp = main["holo_pdb_id"].lower()
+            hp = main["holo_pdb_id"].lower() if main_chain is not None else None
             if hp in cifs:
-                hscheme, holo_auth = chain_scheme(cif_of(hp), main["holo_chain"])
+                hscheme, holo_auth = chain_scheme(cif_of(hp), main_chain)
                 holo_ca = ca_coords(cif_of(hp), holo_auth)
                 hseq = "".join(a for a, _ in hscheme)
                 if not hseq:
-                    no_holo_chain.append(f"{apo}_{chain} -> {main['holo_pdb_id']}_{main['holo_chain']}")
+                    no_holo_chain.append(f"{apo}_{chain} -> {main['holo_pdb_id']}_{main_chain}")
                     hp = None
             if hp in cifs:
                 aln = aligner.align(seq, hseq)[0]
@@ -146,7 +158,7 @@ def main() -> int:
             rows.append({"apo_pdb": apo, "chain": chain, "uniprot": hs[0].get("uniprot_id", ""),
                          "fold": fold_of.get(apo, ""), "sequence": seq,
                          "cryptic_site": ",".join(map(str, sorted(site))),
-                         "n_site_unmapped": unmapped, "main_holo": f"{main['holo_pdb_id']}_{main['holo_chain']}",
+                         "n_site_unmapped": unmapped, "main_holo": f"{main['holo_pdb_id']}_{main_chain or main['holo_chain']}",
                          "main_prmsd": main.get("pRMSD", ""),
                          "displacement": ",".join("nan" if x != x else f"{x:.2f}" for x in disp)})
     out = d / "cryptobench.tsv"
