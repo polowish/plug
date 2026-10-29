@@ -115,7 +115,7 @@ def main() -> int:
             for h in hs:
                 for sel in h["apo_pocket_selection"]:
                     ch, _, key = sel.partition("_")
-                    if ch == chain and key in pos_of:
+                    if ch in (chain, apo_auth) and key in pos_of:
                         site.add(pos_of[key] + 1)
                     else:
                         unmapped += 1
