@@ -261,6 +261,7 @@ from .lp_pdbbind import LpPdbbind
 from .bindingdb import Bindingdb
 from .atlas import Atlas
 from .cryptobench import Apoholo, Cryptobench
+from .chezod import Chezod
 from .mdcath import Mdcath
 
 
